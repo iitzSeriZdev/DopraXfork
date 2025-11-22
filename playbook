@@ -1,0 +1,71 @@
+---
+- name: Install PasarGuard Panel
+  hosts: all
+  become: yes
+  vars:
+    pasarguard_version: "latest"
+    db_type: "sqlite"  # or "mysql", "postgresql"
+    domain_name: "panel.example.com"
+    admin_user: "admin"
+    admin_password: "ChangeMe123!"
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install dependencies (Debian/Ubuntu)
+      apt:
+        name:
+          - git
+          - curl
+          - python3
+          - python3-pip
+          - docker.io
+          - docker-compose
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Clone PasarGuard repository
+      git:
+        repo: https://github.com/PasarGuard/panel.git
+        dest: /opt/pasarguard
+        version: "{{ pasarguard_version }}"
+
+    - name: Copy .env example
+      copy:
+        src: /opt/pasarguard/.env.example
+        dest: /opt/pasarguard/.env
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Set domain and db type in .env
+      lineinfile:
+        path: /opt/pasarguard/.env
+        regexp: '^{{ item.key }}='
+        line: '{{ item.key }}={{ item.value }}'
+      loop:
+        - { key: "DB_TYPE", value: "{{ db_type }}" }
+        - { key: "DOMAIN_NAME", value: "{{ domain_name }}" }
+      notify:
+        - restart pasarguard service
+
+    - name: Bring up services with docker‑compose
+      docker_compose:
+        project_src: /opt/pasarguard
+        state: present
+      register: dc_result
+
+    - name: Create admin account
+      command: >
+        /opt/pasarguard/pasarguard
+        admins --create {{ admin_user }} --password {{ admin_password }}
+      when: dc_result.changed
+
+  handlers:
+    - name: restart pasarguard service
+      docker_compose:
+        project_src: /opt/pasarguard
+        restarted: yes
